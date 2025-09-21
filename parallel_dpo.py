@@ -12,7 +12,7 @@ from tqdm import tqdm
 import json
 import math
 import torch, gc
-from config import DPO_CONFIG, GEN_EPOCHS, TARGET_EXAMPLES, out_subdir
+from config import GPUS, PER_GPU, OUT_DIR, DPO_CONFIG, GEN_EPOCHS, TARGET_EXAMPLES, out_subdir
 
 def clear_cuda():
     gc.collect()
