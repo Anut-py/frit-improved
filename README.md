@@ -1,6 +1,6 @@
 # FRIT: Using Causal Importance to Improve Chain-of-Thought Faithfulness
 
-TODO: Add link to paper here
+You can find our paper at [https://arxiv.org/pdf/2509.13334](https://arxiv.org/pdf/2509.13334).
 
 ## Prerequisites
 
