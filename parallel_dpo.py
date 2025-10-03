@@ -25,7 +25,7 @@ PER_DATASET = math.ceil(TARGET_EXAMPLES / 6)
 
 N_WORKERS = GPUS * PER_GPU
 GPU_IDS = list(range(GPUS))
-DEBUG = 0
+DEBUG = 2
 
 LOCK_RETRY_DELAY = 0.05
 LOCK_RETRY_ATTEMPTS = 5
@@ -262,6 +262,8 @@ def worker_loop(worker_id, n_per_dataset=PER_DATASET, debug=0, gpu_id=None):
 
 # ---------- dpo runner (main process only) ----------
 def run_dpo(gen_epoch, gpu_id=None):
+    import wandb
+    
     if gpu_id is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         print(f"[DPO runner] pinned to CUDA_VISIBLE_DEVICES={gpu_id}")
@@ -301,7 +303,7 @@ def run_dpo(gen_epoch, gpu_id=None):
     
     preference_dataset = preference_dataset.map(lambda x: tokenize_dpo(x))
 
-    # run = wandb.init(project="frit", name="frit-dpo", config={"dpo_config": dpo_cfg})
+    run = wandb.init(project="frit", name="frit-dpo", config={"dpo_config": dpo_cfg})
     trainer = DPOTrainer(
         model=model,
         ref_model=ref_model,
@@ -312,7 +314,7 @@ def run_dpo(gen_epoch, gpu_id=None):
 
     if os.path.exists(STATE_PATH):
         try:
-            state = torch.load(STATE_PATH, map_location="cpu")
+            state = torch.load(STATE_PATH, map_location="cpu", weights_only=False)
             if "optimizer" in state and getattr(trainer, "optimizer", None) is not None:
                 trainer.optimizer.load_state_dict(state["optimizer"])
             if "scheduler" in state and getattr(trainer, "lr_scheduler", None) is not None:
