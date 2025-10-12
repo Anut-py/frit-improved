@@ -7,7 +7,7 @@ CHECKPOINTS_DIR = "/workspace/hf_checkpoints" # Directory to save fine-tuned mod
 OUT_DIR = "/workspace/frit-out" # Directory for generated files to be written to; this directory must exist before you run the code
 DATA_DIR = "/workspace/frit/data" # Directory where data files are stored (set this to /path/to/frit/data)
 
-GPUS = 4 # Number of GPUs
+GPUS = 3 # Number of GPUs
 PER_GPU = 2 # Number of workers per GPU (used only in parallel_dpo.py; adjust as needed for your GPU; we used 2 workers per GPU on RTX Pro 6000 Server GPUs)
 
 data_subdir = DATA_DIR + ("/mistral" if MISTRAL else "/qwen")

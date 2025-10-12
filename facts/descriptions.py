@@ -144,7 +144,7 @@ def prompt_model(prompts: list[str], max_new_tokens: int, debug: bool = False):
     if debug: log(f"generated outputs in {(end - start):0.3f}s")
 
     start = time.time()
-    result = tokenizer.batch_decode(outputs[:, inputs["input_ids"].shape[1]:], skip_special_tokens=False)
+    result = tokenizer.batch_decode(outputs[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     end = time.time()
     if debug: log(f"decoded outputs in {(end - start):0.3f}s")
 

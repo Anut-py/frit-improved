@@ -1,6 +1,6 @@
 import torch
 from datasets import load_dataset
-from augmentation import generate_faithful_trace, generate_cot_completion
+from augmentation import various_traces, generate_cot_completion
 from intervention import intervention
 from model.model import load_aligned_model, load_tokenizer
 from util import prompt_model_answer
@@ -37,45 +37,20 @@ def format_entry(entry, dataset_name):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
-def generate_preliminary_answer(prompt, debug):
-    return generate_cot_completion(prompt, [], model, tokenizer, temperature=0.2, debug=debug)
-
-def generate_unfaithful_cot(prompt, preliminary, debug):
-    # cot = deepcopy(preliminary)
-    # if len(cot[0]):
-    #     idx = random.randint(0, len(cot[0]) - 1)
-    #     step = cot[0][idx]
-    #     step["text"] = intervention([step["text"]])[0]
-    # else:
-    #     cot[0].append({
-    #         "n": 1,
-    #         "ref": "p,r",
-    #         "text": intervention([prompt])[0]
-    #     })
-    # return cot
-    return generate_faithful_trace(prompt, preliminary[0], preliminary[1], model, tokenizer, faithful=False, debug=debug)
-
-def generate_faithful_cot(prompt, preliminary, debug):
-    return generate_faithful_trace(prompt, preliminary[0], preliminary[1], model, tokenizer, debug=debug)
+def generate_preliminary_answer(prompt, temp, debug):
+    return generate_cot_completion(prompt, [], model, tokenizer, temperature=temp, debug=debug)
 
 def format_cot(cot):
     return "\n".join(cot[0] + [f'Answer: {cot[1]}'])
 
-def make_dpo_example(prompt, debug):
+def make_dpo_example(prompt, n=10, prelim_temp=0.5, various_temp=1.0, debug=0):
     try:
-        preliminary = generate_preliminary_answer(prompt, debug)
-        unfaithful = generate_unfaithful_cot(prompt, preliminary, debug)
-        faithful = generate_faithful_cot(prompt, preliminary, debug)
-        if not unfaithful[1] and not faithful[1]:
-            return None
-        if not unfaithful[1]:
-            unfaithful = (unfaithful[0], faithful[1])
-        if not faithful[1]:
-            faithful = (faithful[0], unfaithful[1])
+        preliminary = generate_preliminary_answer(prompt, prelim_temp, debug)
+        samples = various_traces(prompt, preliminary[0], preliminary[1], model, tokenizer, temperature=various_temp, debug=debug, n=n)
         return {
             "prompt": prompt,
-            "x_plus": format_cot(faithful),
-            "x_minus": format_cot(unfaithful)
+            "original": preliminary,
+            "samples": samples
         }
     except Exception as e:
         print(traceback.format_exc())

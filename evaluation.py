@@ -41,17 +41,17 @@ def save_results(results):
 
 def format_entry_for_eval(entry, dataset_name):
     if dataset_name == "gsm8k":
-        return entry["question"], entry["answer"].split("#### ")[1], True
+        return entry["question"], entry["answer"].split("#### ")[1]
     elif dataset_name == "svamp":
-        return entry["question_concat"], entry["Answer"], True
+        return entry["question_concat"], entry["Answer"]
     elif dataset_name == "strategyqa":
-        return entry["facts"] + " " + entry["question"], entry["answer"], False
+        return entry["facts"] + " " + entry["question"], entry["answer"]
     elif dataset_name == "commonsenseqa":
-        return entry["question_concat"], entry["answerKey"], False
+        return entry["question_concat"], entry["answerKey"]
     elif dataset_name == "scibench":
-        return entry["problem_text"], entry["answer_number"], True
+        return entry["problem_text"], entry["answer_number"]
     elif dataset_name == "asdiv":
-        return entry["question"], entry["answer"][0], True
+        return entry["question"], entry["answer"][0]
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
@@ -75,7 +75,7 @@ Q: The Earth orbits the Sun once every year. True or False?
 Q: %s
 """
 
-def evaluate_example_raw(prompt, actual, *, model, tokenizer, is_math, results, debug = 0):
+def evaluate_example_raw(prompt, actual, *, model, tokenizer, results, debug = 0):
     full_prompt = RAW_FORMAT_INSTRUCTIONS % prompt
     retries = total_retries
     for i in range(total_retries):
@@ -103,7 +103,7 @@ def evaluate_example_raw(prompt, actual, *, model, tokenizer, is_math, results, 
 
     return True
 
-def evaluate_example_cot(prompt, actual, *, model, tokenizer, is_math, results, debug = 0):
+def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0):
     retries = total_retries
     for i in range(total_retries):
         if debug >= 1:
@@ -120,11 +120,11 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, is_math, results, 
 
     important_flags, basic_important_flags = [], []
     for i in range(len(steps_meta)):
-        important = is_causally_important(prompt, steps_meta, pred, i, model, tokenizer, is_math=is_math, debug=debug)
+        important = is_causally_important(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
         important_flags.append(1.0 if important else 0.0)
 
         steps_copy = copy.deepcopy(steps_meta)
-        intervened = intervention([steps_copy[i]["text"]], is_math, debug=(debug>=2))[0]
+        intervened = intervention([steps_copy[i]["text"]], debug=(debug>=2))[0]
         if debug >= 2:
             print(f"intervened: {intervened}")
         
@@ -191,10 +191,10 @@ def cotmodel(mn, model):
                 x -= 1
                 continue
             r = results[mn][name]
-            q, a, is_math = format_entry_for_eval(ds[idx], name)
+            q, a = format_entry_for_eval(ds[idx], name)
             if not q or not a:
                 continue
-            res = evaluate_example_cot(q, a, results=r, model=model, tokenizer=tokenizer, is_math=is_math, debug=debug)
+            res = evaluate_example_cot(q, a, results=r, model=model, tokenizer=tokenizer, debug=debug)
             if not res: continue
 
             save_results(results)
@@ -225,10 +225,10 @@ def rawmodel(mn, model):
                 x -= 1
                 continue
             r = results[mn][name]
-            q, a, is_math = format_entry_for_eval(ds[idx], name)
+            q, a = format_entry_for_eval(ds[idx], name)
             if not q or not a:
                 continue
-            evaluate_example_raw(q, a, results=r, model=model, tokenizer=tokenizer, is_math=is_math, debug=debug)
+            evaluate_example_raw(q, a, results=r, model=model, tokenizer=tokenizer, debug=debug)
 
             save_results(results)
         

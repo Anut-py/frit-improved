@@ -26,12 +26,12 @@ def get_clusters(steps: list[str]) -> list[int]:
 
 # Given a list of steps, get the median related fact for each step
 @torch.no_grad()
-def get_facts(steps: list[str], is_math: bool) -> [str]:
+def get_facts(steps: list[str]) -> [str]:
     clusters = get_clusters(steps)
     results = []
     for step, cluster in zip(steps, clusters):
         candidates = wikidata_clusters[cluster]
-        fact_idx = median_similar([step], wikidata_tensor[candidates])[0].item()
+        fact_idx = least_similar([step], wikidata_tensor[candidates])[0].item()
         results.append(wikidata_corpus[candidates[fact_idx]])
     return results
 
@@ -49,8 +49,7 @@ Thought:
 2. Note numbers spelled out in words.
 3. Map "8 - 3 = 5" into that narrative.
 4. Use past-tense "discovered" and spelled-out numbers.
-Answer:
-<answer>In math class today, we discovered that eight minus three makes five.</answer>
+Answer: In math class today, we discovered that eight minus three makes five.
 
 Style sample: "# compute product
 result = x * y"
@@ -59,9 +58,8 @@ Thought:
 1. Recognize code comment and snake_case.
 2. Fact uses digits and asterisk.
 3. Mirror code format, update numbers.
-Answer:
-<answer># compute product
-result = 6 * 7</answer>
+Answer: # compute product
+result = 6 * 7
 
 Style sample: "Three plus five equals eight."
 Fact: "9 - 4 = 5"
@@ -69,16 +67,14 @@ Thought:
 1. Sample is full English with spelled-out numbers.
 2. Use "minus" and "equals" words.
 3. Maintain declarative sentence.
-Answer:
-<answer>Nine minus four equals five.</answer>
+Answer: Nine minus four equals five.
 
 Style sample: "WHAT A SPECTACULAR REACTION!!! COMBUSTION IS AMAZING!!!"
 Fact: "Hydrogen combusts in oxygen to form water."
 Thought:
 1. Identify all-caps and exclamation marks.
 2. Apply exclamatory, emphatic style.
-Answer:
-<answer>HYDROGEN COMBUSTS IN OXYGEN TO FORM WATER!!!</answer>
+Answer: HYDROGEN COMBUSTS IN OXYGEN TO FORM WATER!!!
 
 Style sample: "2 + 3 = 5"
 Fact: "Seven minus four equals three."
@@ -86,8 +82,7 @@ Thought:
 1. Sample is inline arithmetic with digits.
 2. Fact uses words; swap to digits format.
 3. Maintain simple expression.
-Answer:
-<answer>7 - 4 = 3</answer>
+Answer: 7 - 4 = 3
 
 Style sample: "It has been demonstrated that increased temperature accelerates reaction rates under controlled conditions."
 Fact: "Catalysts lower activation energy."
@@ -95,8 +90,7 @@ Thought:
 1. Formal academic tone, passive voice.
 2. Use complex grammar and technical terms.
 3. Restate fact in passive structure.
-Answer:
-<answer>It has been shown that catalysts lower the activation energy of reactions.</answer>
+Answer: It has been shown that catalysts lower the activation energy of reactions.
 
 Style sample: "The sum of angles in a quadrilateral is 360 degrees"
 Fact: "97 + -45 = 52"
@@ -104,16 +98,14 @@ Thought:
 1. Sample is a grammatical math statement.
 2. Use full English structure.
 3. Spell out numbers in words.
-Answer:
-<answer>The sum of ninety-seven and minus forty-five is fifty-two.</answer>
+Answer: The sum of ninety-seven and minus forty-five is fifty-two.
 
 Style sample: "2 + 2 = 4"
 Fact: "5 + 7 = 12"
 Thought:
 1. Simple inline arithmetic with digits.
 2. Keep digits and operators.
-Answer:
-<answer>5 + 7 = 12</answer>
+Answer: 5 + 7 = 12
 
 Style sample: "First, expose the leaf to sunlight. Then observe oxygen bubbles forming."
 Fact: "Photosynthesis converts carbon dioxide into oxygen."
@@ -121,8 +113,7 @@ Thought:
 1. Step-by-step imperative instructions.
 2. Use transition words.
 3. Maintain short sentences.
-Answer:
-<answer>First, provide carbon dioxide and light; then observe that photosynthesis converts carbon dioxide into oxygen.</answer>
+Answer: First, provide carbon dioxide and light; then observe that photosynthesis converts carbon dioxide into oxygen.
 
 Style sample: "# reaction_equation
 equation = '2H2 + O2 -> 2H2O'"
@@ -131,33 +122,29 @@ Thought:
 1. Code-style with comment and arrow.
 2. Mirror snake_case and comment.
 3. Replace factors and units.
-Answer:
-<answer># boiling_point
-boiling_point = 100  # Celsius</answer>
+Answer: # boiling_point
+boiling_point = 100  # Celsius
 
 Style sample: "$6 \\times 4 = 24$"
 Fact: "8 / 2 = 4"
 Thought:
 1. LaTeX inline math with \\times and symbols.
 2. Use dollar signs and division operator.
-Answer:
-<answer>$8 \\div 2 = 4$</answer>
+Answer: $8 \\div 2 = 4$
 
 Style sample: "E = m * c^2"
 Fact: "Force equals mass times acceleration."
 Thought:
 1. Pure formula notation.
 2. Use ASCII variables and operators.
-Answer:
-<answer>F = m * a</answer>
+Answer: F = m * a
 
 Style sample: "Did you know that Earth takes approximately 365 days to orbit the Sun?"
 Fact: "Mercury is the closest planet to the Sun."
 Thought:
 1. Conversational question form.
 2. Use "Did you know" prefix.
-Answer:
-<answer>Did you know that Mercury is the closest planet to the Sun?</answer>
+Answer: Did you know that Mercury is the closest planet to the Sun?
 
 Style sample: "# calculate sum
 result = a + b"
@@ -166,25 +153,22 @@ Thought:
 1. Code-style formatting with comment.
 2. Spelled-out arithmetic vs code.
 3. Swap to digits and snake_case.
-Answer:
-<answer># calculate sum
-result = 3 + 6  # result = 9</answer>
+Answer: # calculate sum
+result = 3 + 6  # result = 9
 
 Style sample: "Tomorrow, the research team will analyze the samples under the microscope."
 Fact: "The Moon orbits the Earth."
 Thought:
 1. Future-tense narrative description.
 2. Use same subject-verb style.
-Answer:
-<answer>Tomorrow, the Moon will orbit the Earth.</answer>
+Answer: Tomorrow, the Moon will orbit the Earth.
 
 Style sample: "$3 \\times 3 = 9$"
 Fact: "8 / 2 = 4"
 Thought:
 1. LaTeX multiplication notation.
 2. Mirror dollar delimiters.
-Answer:
-<answer>$8 \\div 2 = 4$</answer>
+Answer: $8 \\div 2 = 4$
 
 Style sample: "IF 2 + 2 = 4 THEN 3 + 3 = 6"
 Fact: "If five minus two equals three, then four minus one equals three."
@@ -192,8 +176,7 @@ Thought:
 1. All-caps conditional math.
 2. Preserve IF/THEN structure.
 3. Use digits and operators.
-Answer:
-<answer>IF 5 - 2 = 3 THEN 4 - 1 = 3</answer>
+Answer: IF 5 - 2 = 3 THEN 4 - 1 = 3
 
 Style sample: "%s"
 Fact: "%s"
@@ -203,9 +186,9 @@ Thought:
 # Given s_i, return s'_i
 # Batched so you can do multiple steps at once (we did not make use of batching)
 @torch.no_grad()
-def intervention(steps: list[str], is_math: bool, debug: bool = False) -> list[str]:
+def intervention(steps: list[str], debug: bool = False) -> list[str]:
     start = time.time()
-    facts = get_facts(steps, is_math)
+    facts = get_facts(steps)
     end = time.time()
     if debug: print(f"got facts in {(end - start):0.3f}s")
 

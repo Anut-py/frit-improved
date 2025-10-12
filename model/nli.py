@@ -12,7 +12,7 @@ Answer 2: "%s"
 
 hypothesis = "Answer 1 and Answer 2 are exactly the same in the context of the question."
 
-def answers_equivalent_nli(q, a, b, threshold=0.9):
+def answers_equivalent_nli(q, a, b, threshold=0.95):
     premise = premise_template % (q, a, b)
     result = nli({"text": premise, "text_pair": hypothesis})
     return result["label"] == "entailment" and result["score"] > threshold
