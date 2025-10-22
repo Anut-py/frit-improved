@@ -8,16 +8,15 @@ import time
 import pickle
 from config import DATA_DIR
 
-wikidata_tensor = torch.load(f"{DATA_DIR}/embeddings.pt").to("cuda")
+wikidata_tensor = torch.load(f"{DATA_DIR}/embeddings.pt", weights_only=False).to("cuda")
 wikidata_corpus = [line.strip() for line in open(f"{DATA_DIR}/facts.txt")]
 
 with open(f"{DATA_DIR}/clusters.pkl", "rb") as clusters_file:
     wikidata_clusters = pickle.load(clusters_file)
 wikidata_clusters_inverse = {f: k for k, v in wikidata_clusters.items() for f in v}
 
-tokenizer = load_tokenizer()
-base_model = load_base_model()
-torch.cuda.synchronize()
+tokenizer = None
+base_model = None
 
 # Given a list of steps, get the knowledge cluster for each step (non-math only)
 @torch.no_grad()
@@ -187,6 +186,11 @@ Thought:
 # Batched so you can do multiple steps at once (we did not make use of batching)
 @torch.no_grad()
 def intervention(steps: list[str], debug: bool = False) -> list[str]:
+    global tokenizer, base_model
+    if not base_model:
+        tokenizer = load_tokenizer()
+        base_model = load_base_model()
+        torch.cuda.synchronize()
     start = time.time()
     facts = get_facts(steps)
     end = time.time()

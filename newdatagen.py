@@ -1,16 +1,16 @@
 import torch
 from datasets import load_dataset
-from augmentation import various_traces, generate_cot_completion
-from intervention import intervention
-from model.model import load_aligned_model, load_tokenizer
-from util import prompt_model_answer
 from copy import deepcopy
 import random
 import traceback
 from tqdm import tqdm
+from augmentation import various_traces, generate_cot_completion
+from intervention import intervention
+from model.model import load_aligned_model, load_tokenizer
+from util import prompt_model_answer
 
-model = load_aligned_model(trainable=False)
-tokenizer = load_tokenizer()
+model = None
+tokenizer = None
 
 dataset_sources = {
     "gsm8k": load_dataset("gsm8k", "main")["train"],
@@ -43,8 +43,13 @@ def generate_preliminary_answer(prompt, temp, debug):
 def format_cot(cot):
     return "\n".join(cot[0] + [f'Answer: {cot[1]}'])
 
-def make_dpo_example(prompt, n=10, prelim_temp=0.5, various_temp=1.0, debug=0):
+def make_dpo_example(prompt, n=10, prelim_temp=0.5, various_temp=1.2, debug=0):
     try:
+        global model, tokenizer
+        if not model:
+            model = load_aligned_model(trainable=False)
+            tokenizer = load_tokenizer()
+
         preliminary = generate_preliminary_answer(prompt, prelim_temp, debug)
         samples = various_traces(prompt, preliminary[0], preliminary[1], model, tokenizer, temperature=various_temp, debug=debug, n=n)
         return {

@@ -1,7 +1,6 @@
 **/.ipynb_checkpoints
 **/__pycache__
 *.ipynb
-*.ipynb
 *.json
 *.log
 *.out
