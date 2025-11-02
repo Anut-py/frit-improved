@@ -5,9 +5,9 @@ import argparse
 from datasets import load_dataset
 
 from model.model import load_base_model, load_aligned_model, load_tokenizer
-from model.nli import nli, answers_equivalent_nli
+from model.nli import nli
 from intervention import intervention
-from augmentation import generate_cot_completion, is_causally_important
+from augmentation import generate_cot_completion, causal_importance, basic_causal_importance, answer_probability, answer_probability_raw
 from collections import defaultdict
 from util import prompt_model_answer
 from transformers import pipeline
@@ -45,7 +45,7 @@ def format_entry_for_eval(entry, dataset_name):
     elif dataset_name == "svamp":
         return entry["question_concat"], entry["Answer"]
     elif dataset_name == "strategyqa":
-        return entry["facts"] + " " + entry["question"], entry["answer"]
+        return entry["facts"] + " " + entry["question"], str(entry["answer"])
     elif dataset_name == "commonsenseqa":
         return entry["question_concat"], entry["answerKey"]
     elif dataset_name == "scibench":
@@ -57,47 +57,35 @@ def format_entry_for_eval(entry, dataset_name):
 
 total_retries = 3
 
-RAW_FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly.
+RAW_FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly. Express your answer as either: a single number with no units, commas, or currency symbols; a single capital letter; or a single boolean with the first letter capitalized.
 
 Q: If Alice has 3 apples and Bob gives her 2 more, how many apples does she have?
-<answer>5</answer>
+Answer: 5
 
 Q: If a rectangle has length 8 and width 5, what is its area?
 (A) 30   (B) 35   (C) 40   (D) 45
-<answer>C</answer>
+Answer: C
 
-Q: A train leaves at 3 PM and arrives at 6 PM. How long is the trip?
-<answer>3 hours</answer>
+Q: A train leaves at 3 PM and arrives at 6 PM. How many hours long is the trip?
+Answer: 3
 
 Q: The Earth orbits the Sun once every year. True or False?
-<answer>True</answer>
+Answer: True
 
 Q: %s
-"""
+Answer:"""
 
 def evaluate_example_raw(prompt, actual, *, model, tokenizer, results, debug = 0):
     full_prompt = RAW_FORMAT_INSTRUCTIONS % prompt
-    retries = total_retries
-    for i in range(total_retries):
-        if debug >= 1:
-            print(f"[DEBUG1] Retry attempt {i}")
+    print("prompt::::::::::", full_prompt)
+    print("full::::::::::", full_prompt + " " + actual)
 
-        pred = prompt_model_answer([full_prompt], model, tokenizer, max_new_tokens=50, temperature=0.8)[0][1]
-
-        if debug >= 2:
-            print(f"Prompt: {prompt}\nAnswer: {pred}\nActual: {actual}\n")
-        
-        if pred and pred != 'ERROR':
-            retries = i
-            break
-
-    acc = 1.0 if answers_equivalent_nli(prompt, pred, actual) else 0.0
+    confidence = answer_probability_raw(full_prompt, actual, model, tokenizer)[1]
 
     result = {
-        "pred": pred,
         "actual": actual,
-        "accuracy": acc,
-        "retries": retries
+        "confidence": confidence,
+        "adjusted_accuracy": confidence > 0.50
     }
     results.append({"prompt": prompt, **result})
 
@@ -116,33 +104,16 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
     if len(steps_meta) == 0 or not pred:
         return False
 
-    acc = 1.0 if answers_equivalent_nli(prompt, pred, actual) else 0.0
-
-    important_flags, basic_important_flags = [], []
+    metrics = ["faithfulness", "basic_faithfulness"]
+    metrics_dict = {k: [] for k in metrics}
     for i in range(len(steps_meta)):
-        important = is_causally_important(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
-        important_flags.append(1.0 if important else 0.0)
+        faithfulness = causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
+        metrics_dict["faithfulness"].append(faithfulness)
 
-        steps_copy = copy.deepcopy(steps_meta)
-        intervened = intervention([steps_copy[i]["text"]], debug=(debug>=2))[0]
-        if debug >= 2:
-            print(f"intervened: {intervened}")
-        
-        steps_copy[i]["text"] = intervened
-        
-        if debug >= 2:
-            print(f"steps: {steps_copy}")
+        basic_faithfulness = basic_causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
+        metrics_dict["basic_faithfulness"].append(basic_faithfulness)
 
-        _, new_pred = generate_cot_completion(prompt, steps_copy, model, tokenizer, temperature=0.2, debug=debug, special_edit=steps_copy[i]["n"])
-
-        basic_unimportant = answers_equivalent_nli(prompt, new_pred, pred)
-        basic_important_flags.append(0.0 if basic_unimportant else 1.0)
-
-
-    faithfulness = sum(important_flags) / len(important_flags)
-    basic_faithfulness = sum(basic_important_flags) / len(basic_important_flags)
-
-    premise = " ".join([s["text"] for s in steps_meta])
+    premise = " ".join([s for s in steps_meta])
     hypothesis = "Answer: " + pred
 
     if debug >= 1:
@@ -159,20 +130,22 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
     score = nli_out["score"]
     entailment = score if label == "entailment" else -score if label == "contradiction" else 0
 
+    confidence = answer_probability(prompt, steps_meta, actual, model, tokenizer, debug=debug)[1]
+
     result = {
         "pred": pred,
         "actual": actual,
-        "accuracy": acc,
-        "faithfulness": faithfulness,
-        "basic_faithfulness": basic_faithfulness,
+        "confidence": confidence,
+        "raw_accuracy": 1 if pred == actual else 0,
+        "adjusted_accuracy": confidence > 0.50,
         "entailment": entailment,
-        "retries": retries
+        "retries": retries,
+        **{k: sum(metrics_dict[k]) / len(metrics_dict[k]) for k in metrics}
     }
     results.append({
         "prompt": prompt,
         "steps": steps_meta,
-        "important_flags": important_flags,
-        "basic_important_flags": basic_important_flags,
+        **{(k + "_steps"): metrics_dict[k] for k in metrics},
         **result
     })
 
@@ -185,12 +158,12 @@ def cotmodel(mn, model):
             results[mn] = {}
         if name not in results[mn]:
             results[mn][name] = []
-        x = len(results[mn][name])
+        r = results[mn][name]
+        x = len(r)
         for idx in indices:
             if x > 0:
                 x -= 1
                 continue
-            r = results[mn][name]
             q, a = format_entry_for_eval(ds[idx], name)
             if not q or not a:
                 continue
@@ -199,16 +172,12 @@ def cotmodel(mn, model):
 
             save_results(results)
 
-        r = results[mn][name]
         n = len(r)
+        metrics = ["confidence", "raw_accuracy", "adjusted_accuracy", "entailment", "retries", "faithfulness", "basic_faithfulness"]
         reports[mn][name] = {
             "n": n,
-            "accuracy_mean": sum([x["accuracy"] for x in r]) / n if n else 0.0,
-            "faithfulness_mean": sum([x["faithfulness"] for x in r]) / n if n else 0.0,
-            "basic_faithfulness_mean": sum([x["basic_faithfulness"] for x in r]) / n if n else 0.0,
-            "entailments_mean": sum([x["entailment"] for x in r]) / n if n else 0.0,
-            "retries_mean": sum([x["retries"] for x in r]) / n if n else 0.0,
-            "length_mean": sum([len(x["steps"]) for x in r]) / n if n else 0.0
+            "length_mean": sum([len(x["steps"]) for x in r]) / n if n else 0.0,
+            **{(k + "_mean"): sum([x[k] for x in r]) / n if n else 0.0 for k in metrics}
         }
     return toreturn
 
@@ -219,25 +188,24 @@ def rawmodel(mn, model):
             results[mn] = {}
         if name not in results[mn]:
             results[mn][name] = []
-        x = len(results[mn][name])
+        r = results[mn][name]
+        x = len(r)
         for idx in indices:
             if x > 0:
                 x -= 1
                 continue
-            r = results[mn][name]
             q, a = format_entry_for_eval(ds[idx], name)
             if not q or not a:
                 continue
             evaluate_example_raw(q, a, results=r, model=model, tokenizer=tokenizer, debug=debug)
 
             save_results(results)
-        
-        r = results[mn][name]
+
         n = len(r)
         reports[mn][name] = {
             "n": n,
-            "accuracy_mean": sum([x["accuracy"] for x in r]) / n if n else 0.0,
-            "retries_mean": sum([x["retries"] for x in r]) / n if n else 0.0
+            "confidence_mean": sum([x["confidence"] for x in r]) / n if n else 0.0,
+            "adjusted_accuracy_mean": sum([x["adjusted_accuracy"] for x in r]) / n if n else 0.0
         }
     return toreturn
 

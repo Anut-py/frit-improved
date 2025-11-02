@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 import builtins
-print = lambda *args, **kwargs: builtins.print(*args, **{**kwargs, "flush": True})
+from datetime import datetime
+import pytz
+
+eastern = pytz.timezone('US/Eastern')
+
+print = lambda *args, **kwargs: builtins.print(
+    f"[{datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S')}]",
+    *args,
+    **{**kwargs, "flush": True}
+)
 
 import os
 import pickle
@@ -18,7 +27,7 @@ import logging
 LOG = logging.getLogger(__name__)
 
 # user config should provide these
-from config import GPUS, PER_GPU, OUT_DIR, DPO_CONFIG, GEN_EPOCHS, TARGET_EXAMPLES, out_subdir
+from config import GPUS, PER_GPU, BATCH_SIZE, EPOCHS, LR, GRAD_ACCUM_STEPS, MAX_LENGTH, KL_LAMBDA, GEN_EPOCHS, TARGET_EXAMPLES, out_subdir
 
 # Constants and paths
 MONITOR_POLL_SECONDS = 5   # how often main prints datagen progress while workers run
@@ -31,14 +40,12 @@ DEBUG = 2
 
 LOCK_RETRY_DELAY = 0.05
 LOCK_RETRY_ATTEMPTS = 5
-PICKLE_PATH = os.path.join(OUT_DIR, "datagen.pkl")
+PICKLE_PATH = os.path.join(out_subdir, "datagen.pkl")
 PICKLE_ARCHIVE_PATH = os.path.join(out_subdir, "datagen%d.pkl")
-EPOCH_PATH = os.path.join(OUT_DIR, "current_epoch")
-STATE_PATH = os.path.join(OUT_DIR, "dpo_state.pt")
-STATUS_PATH = os.path.join(OUT_DIR, "dpo_status.json")
+EPOCH_PATH = os.path.join(out_subdir, "current_epoch")
 
-SAMPLE_ENTRIES_PATH = os.path.join(OUT_DIR, "sample_entries.pkl")
-WORK_QUEUE_PATH = os.path.join(OUT_DIR, "work_queue.pkl")
+SAMPLE_ENTRIES_PATH = os.path.join(out_subdir, "sample_entries.pkl")
+WORK_QUEUE_PATH = os.path.join(out_subdir, "work_queue.pkl")
 
 # Utility: free CUDA cache
 def clear_cuda():
@@ -398,13 +405,13 @@ def worker_loop(worker_id, debug=0, gpu_id=None):
 
         print(f"[Worker {worker_id}] processing \"{prompt}\"")
 
-        dpo_example = datagen.make_dpo_example(prompt, debug=debug)
-        if dpo_example is None:
+        sft_example = datagen.make_sft_example(prompt, debug=debug)
+        if sft_example is None:
             print(f"[Worker {worker_id}] result was None for index {idx}")
             continue
 
         try:
-            new_len = safe_append_pickle(PICKLE_PATH, dpo_example)
+            new_len = safe_append_pickle(PICKLE_PATH, sft_example)
             print(f"[Worker {worker_id}] appended example for idx={idx}, total={new_len}")
             if new_len >= TARGET_EXAMPLES:
                 print(f"[Worker {worker_id}] reached target after appending ({new_len})")
@@ -416,157 +423,205 @@ def worker_loop(worker_id, debug=0, gpu_id=None):
 
     # end while
 
-# ---------- DPO runner (main-process only) ----------
-def run_dpo(gen_epoch, gpu_id=None):
-    import wandb
-    from datasets import Dataset
-    from trl import DPOConfig, DPOTrainer
+# ---------- SFT runner (main-process only) ----------
+def run_sft(gen_epoch, gpu_id=None):
+    from copy import deepcopy
 
-    if gpu_id is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        print(f"[DPO runner] pinned to CUDA_VISIBLE_DEVICES={gpu_id}")
+    data = safe_read_pickle(PICKLE_PATH)
+    
+    kept = []
+    set_aside = []
+    threshold = 3 # discard entries with a difference greater than 3 to avoid extremes
 
-    torch.set_grad_enabled(True)
+    for entry in data:
+        samples = entry.get('samples', [])
+        if len(samples) < 2:
+            continue
 
-    from model.model import load_tokenizer, load_base_model, load_aligned_model, save_aligned_model
-
-    tokenizer = load_tokenizer()
-    ref_model = load_base_model()
-    model = load_aligned_model()
-
-    model.print_trainable_parameters()
-
-    dpo_triples = safe_read_pickle(PICKLE_PATH)
-    if len(dpo_triples) < TARGET_EXAMPLES:
-        raise RuntimeError(f"DPO runner expected {TARGET_EXAMPLES} examples but found {len(dpo_triples)}")
-
-    preference_dataset = Dataset.from_list([{"prompt": t["prompt"], "chosen": t["x_plus"], "rejected": t["x_minus"]} for t in dpo_triples])
-    dpo_cfg = DPO_CONFIG
-
-    def tokenize_dpo(example):
-        chosen = tokenizer(example["chosen"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
-        rejected = tokenizer(example["rejected"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
-        return {
-            "input_ids_chosen": chosen.input_ids.squeeze(0),
-            "attention_mask_chosen": chosen.attention_mask.squeeze(0),
-            "input_ids_rejected": rejected.input_ids.squeeze(0),
-            "attention_mask_rejected": rejected.attention_mask.squeeze(0),
-        }
-
-    preference_dataset = preference_dataset.map(lambda x: tokenize_dpo(x))
-
-    run = wandb.init(project="frit", name="frit-dpo", config={"dpo_config": dpo_cfg})
-    trainer = DPOTrainer(
-        model=model,
-        ref_model=ref_model,
-        processing_class=tokenizer,
-        args=DPOConfig(**dpo_cfg),
-        train_dataset=preference_dataset
-    )
-
-    # restore optimizer/scheduler if present
-    if os.path.exists(STATE_PATH):
-        try:
-            state = torch.load(STATE_PATH, map_location="cpu", weights_only=False)
-            if "optimizer" in state and getattr(trainer, "optimizer", None) is not None:
-                trainer.optimizer.load_state_dict(state["optimizer"])
-            if "scheduler" in state and getattr(trainer, "lr_scheduler", None) is not None:
-                trainer.lr_scheduler.load_state_dict(state["scheduler"])
-            saved_args = state.get("args")
-            if saved_args:
-                try:
-                    LOG.info("Loaded saved trainer args (not overwriting active config)")
-                except Exception:
-                    pass
-            print("[DPO] Resumed optimizer/scheduler state")
-        except Exception:
-            LOG.exception("Failed to load %s; starting from scratch", STATE_PATH)
-
-    dpo_status = {"state": "running", "start_time": time.time(), "gen_epoch": gen_epoch}
-    try:
-        with open(STATUS_PATH, "w") as sf:
-            json.dump(dpo_status, sf)
-            sf.flush()
-            os.fsync(sf.fileno())
-    except Exception:
-        pass
-
-    result = trainer.train()
-
-    dpo_status = {
-        "state": "finished",
-        "end_time": time.time(),
-        "gen_epoch": gen_epoch,
-        "metrics": getattr(result, "metrics", None) or {}
-    }
-    try:
-        with open(STATUS_PATH, "w") as sf:
-            json.dump(dpo_status, sf)
-    except Exception:
-        pass
-
-    save_aligned_model(model)
-    run.finish()
-
-    # Save optimizer/scheduler + args (non-model state)
-    save_dict = {}
-    if getattr(trainer, "optimizer", None) is not None:
-        try:
-            save_dict["optimizer"] = trainer.optimizer.state_dict()
-        except Exception:
-            LOG.exception("Failed to serialize optimizer.state_dict()")
-    if getattr(trainer, "lr_scheduler", None) is not None:
-        try:
-            save_dict["scheduler"] = trainer.lr_scheduler.state_dict()
-        except Exception:
-            LOG.exception("Failed to serialize lr_scheduler.state_dict()")
-
-    # save trainer.args in a robust plain-dict form
-    try:
-        if hasattr(trainer, "args"):
-            try:
-                args_dict = vars(trainer.args)
-            except Exception:
-                args_dict = {}
-                for name in dir(trainer.args):
-                    if name.startswith("_"):
-                        continue
-                    try:
-                        val = getattr(trainer.args, name)
-                        if not callable(val):
-                            args_dict[name] = val
-                    except Exception:
-                        pass
-            save_dict["args"] = args_dict
-    except Exception:
-        LOG.exception("Failed to capture trainer.args")
-
-    if save_dict:
-        try:
-            tmpfd, tmpname = tempfile.mkstemp(dir=".", prefix=os.path.basename(STATE_PATH) + ".tmp.")
-            with os.fdopen(tmpfd, "wb") as tf:
-                torch.save(save_dict, tf)
-                tf.flush()
-                os.fsync(tf.fileno())
-            os.replace(tmpname, STATE_PATH)
-        except Exception:
-            LOG.exception("Failed to save trainer state to %s", STATE_PATH)
-            if os.path.exists(tmpname):
-                try:
-                    os.remove(tmpname)
-                except Exception:
-                    pass
+        scores = [s[1] for s in samples]
+        max_score = max(scores)
+        min_score = min(scores)
+    
+        if max_score - min_score > threshold:
+            i_max = scores.index(max_score)
+            i_min = scores.index(min_score)
+    
+            highest = samples[i_max]
+            lowest = samples[i_min]
+    
+            set_aside.append({
+                'prompt': entry['prompt'],
+                'original': entry['original'],
+                'highest': highest,
+                'lowest': lowest
+            })
+    
+            remaining = [samples[i] for i in range(len(samples)) if i not in (i_max, i_min) and scores[i] > 1]
+    
+            if len(remaining):
+                new_entry = deepcopy(entry)
+                new_entry['samples'] = remaining
+                kept.append(new_entry)
         else:
-            print("[DPO] Saved optimizer/scheduler state")
+            kept.append(deepcopy(entry))
+    
+    from model.model import load_tokenizer, load_aligned_model, load_base_model
+    
+    tokenizer = load_tokenizer()
+    model = load_aligned_model()
+    ref_model = load_base_model()
+    
+    model.train()
+    ref_model.eval()
+    
+    import os
+    import torch
+    from datasets import Dataset
+    from transformers import TrainingArguments, Trainer
+    from torch.nn import functional as F
+    from torch.optim import AdamW
+    
+    device = next(model.parameters()).device
+    
+    def _join_trace(trace):
+        if isinstance(trace, (list, tuple)):
+            return "\n".join(s.strip() for s in trace if s is not None)
+        return str(trace)
+    
+    examples = []
+    raw_scores = [float(sc) for e in kept for _, sc in e.get("samples", [])]
+    if not raw_scores:
+        raise ValueError("kept contains no samples")
+    mn, mx = min(raw_scores), max(raw_scores)
+    denom = max(1e-12, mx - mn)
+    eos = tokenizer.eos_token or ""
+    
+    for e in kept:
+        prompt = e["prompt"].strip()
+        for trace, score in e.get("samples", []):
+            weight = (float(score) - mn) / denom
+            inp = prompt + eos
+            tgt = _join_trace(trace) + eos
+            inp_ids = tokenizer.encode(inp, add_special_tokens=False)
+            tgt_ids = tokenizer.encode(tgt, add_special_tokens=False)
+            if len(inp_ids) + len(tgt_ids) > MAX_LENGTH:
+                keep_tgt = MAX_LENGTH // 2
+                keep_inp = MAX_LENGTH - keep_tgt
+                inp_ids = inp_ids[-keep_inp:]
+                tgt_ids = tgt_ids[:keep_tgt]
+            input_ids = inp_ids + tgt_ids
+            labels = [-100] * len(inp_ids) + tgt_ids
+            examples.append({"input_ids": input_ids, "labels": labels, "weight": float(weight)})
+    
+    hf_ds = Dataset.from_list(examples)
+    
+    def data_collator(batch):
+        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        max_len = max(len(x["input_ids"]) for x in batch)
+        input_ids = [x["input_ids"] + [pad_id] * (max_len - len(x["input_ids"])) for x in batch]
+        labels = [x["labels"] + [-100] * (max_len - len(x["labels"])) for x in batch]
+        attention_mask = [[1] * len(x["input_ids"]) + [0] * (max_len - len(x["input_ids"])) for x in batch]
+        weights = [x["weight"] for x in batch]
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+            "weights": torch.tensor(weights, dtype=torch.float)
+        }
+    
+    from torch.nn import functional as F
+    
+    class WeightedSFTTrainer(Trainer):
+        def __init__(self, ref_model=None, kl_lambda=0.5, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.ref_model = ref_model
+            self.kl_lambda = kl_lambda
+            if self.ref_model is not None:
+                self.ref_model.to(self.model.device)
+                self.ref_model.eval()
+                for p in self.ref_model.parameters():
+                    p.requires_grad = False
+    
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            weights = inputs.pop("weights", None)
+            device = self.model.device
+            tensor_inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+        
+            if weights is None:
+                weights = torch.ones(tensor_inputs["labels"].size(0), dtype=torch.float, device=device)
+            else:
+                weights = weights.to(device).float()
+        
+            labels = tensor_inputs["labels"]
+            outputs = model(**tensor_inputs)
+            logits = outputs.logits  # (B, S, V)
+        
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            mask = (shift_labels != -100).float()
+        
+            vocab = shift_logits.size(-1)
+            loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
+            flat_logits = shift_logits.view(-1, vocab)
+            flat_labels = shift_labels.view(-1)
+            token_losses = loss_fct(flat_logits, flat_labels).view(shift_labels.size(0), -1)
+        
+            token_loss_sum = (token_losses * mask).sum(dim=1)
+            denom = mask.sum(dim=1).clamp(min=1.0)
+            per_sample_ce = token_loss_sum / denom
+            weighted_ce = (per_sample_ce * weights).sum() / max(1e-12, weights.sum())
+            total_loss = weighted_ce
+        
+            if self.ref_model is not None and self.kl_lambda > 0:
+                with torch.no_grad():
+                    ref_logits = self.ref_model(
+                        input_ids=tensor_inputs["input_ids"],
+                        attention_mask=tensor_inputs.get("attention_mask", None)
+                    ).logits
+                ref_shift = ref_logits[..., :-1, :].contiguous()
+                ref_logp = F.log_softmax(ref_shift, dim=-1)
+                model_logp = F.log_softmax(shift_logits, dim=-1)
+                ref_p = torch.exp(ref_logp)
+                per_token_kl = (ref_p * (ref_logp - model_logp)).sum(dim=-1)    # (B, S-1)
+                per_sample_kl = (per_token_kl * mask).sum(dim=1) / denom
+                kl_weights = (1.0 - weights).clamp(min=0.0)
+                weighted_kl = (per_sample_kl * kl_weights).sum() / max(1e-12, kl_weights.sum())
+                total_loss = total_loss + self.kl_lambda * weighted_kl
+        
+            return (total_loss, outputs) if return_outputs else total_loss
+    
+    
+    training_args = TrainingArguments(
+        output_dir=out_subdir + "/training-output",
+        per_device_train_batch_size=BATCH_SIZE,
+        num_train_epochs=EPOCHS,
+        learning_rate=LR,
+        gradient_accumulation_steps=GRAD_ACCUM_STEPS,
+        fp16=torch.cuda.is_available(),
+        save_strategy="epoch",
+        save_total_limit=3,
+        remove_unused_columns=False,
+        report_to="none",
+    )
+    
+    trainer = WeightedSFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=hf_ds,
+        data_collator=data_collator,
+        tokenizer=tokenizer,
+        ref_model=ref_model,
+        kl_lambda=KL_LAMBDA
+    )
+    
+    trainer.train()
+    
+    from model.model import save_aligned_model
+    save_aligned_model(model)
 
-    # cleanup
-    try:
-        del trainer
-        del tokenizer
-        del ref_model
-        del model
-    except Exception:
-        pass
+    del tokenizer, model, ref_model, trainer
+
+    clear_cuda()
 
 def gen_work_queue():
     import newdatagen as datagen
@@ -601,12 +656,6 @@ if __name__ == "__main__":
     for gen_epoch in range(start_epoch, GEN_EPOCHS):
         print(f"=== GEN EPOCH {gen_epoch} ===")
         clear_cuda()
-
-        # remove any leftover per-epoch files so generation starts fresh
-        try:
-            os.remove(STATUS_PATH)
-        except Exception:
-            pass
 
         original_count = len(safe_read_pickle(PICKLE_PATH))
 
@@ -668,26 +717,22 @@ if __name__ == "__main__":
         final = safe_read_pickle(PICKLE_PATH)
         print(f"[Main] epoch {gen_epoch} finished generation: {len(final)} examples")
 
-        # run DPO on the epoch file (pass gen_epoch so run_dpo can write status)
+        # run SFT on the epoch file (pass gen_epoch so run_sft can write status)
         # currently skipped to match your previous run behavior
-        print("Datagen finished, skipping DPO")
-        # Uncomment to enable DPO stage:
-        # print(f"[Main] starting DPO for epoch {gen_epoch}")
-        # run_dpo(gen_epoch, gpu_id=None)
-        # try:
-        #     with open(STATUS_PATH, "r") as sf:
-        #         s = json.load(sf)
-        #         print("[Main] DPO metrics:", s.get("metrics"))
-        # except Exception:
-        #     pass
-        # print(f"[Main] finished DPO for epoch {gen_epoch}")
+        print("Datagen finished, skipping SFT")
+
+        print(f"[Main] starting SFT for epoch {gen_epoch}")
+        
+        run_sft(gen_epoch, gpu_id=None)
+        
+        print(f"[Main] finished SFT for epoch {gen_epoch}")
 
         # Optionally archive the datagen pickle and advance epoch counter
-        # try:
-        #     if os.path.exists(PICKLE_PATH):
-        #         shutil.move(PICKLE_PATH, PICKLE_ARCHIVE_PATH % gen_epoch)
-        # except Exception as e:
-        #     print("Rename failed:", e)
-        # increment_number(EPOCH_PATH)
+        try:
+            if os.path.exists(PICKLE_PATH):
+                shutil.move(PICKLE_PATH, PICKLE_ARCHIVE_PATH % gen_epoch)
+        except Exception as e:
+            print("Rename failed:", e)
+        increment_number(EPOCH_PATH)
 
     print("All gen epochs complete.")

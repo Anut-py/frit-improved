@@ -8,7 +8,7 @@ import random
 def answers_equivalent(prompt, answer1: str, answer2: str) -> bool:
     return answers_equivalent_nli(prompt, answer1, answer2)
 
-FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly.
+FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly. Express your answer as either: a single number with no units, commas, or currency symbols; a single capital letter; or a single boolean with the first letter capitalized.
 
 Q: If Alice has 3 apples and Bob gives her 2 more, how many apples does she have?
 Reasoning:
@@ -25,12 +25,12 @@ The length is 8 and the width is 5.
 Multiplying 8 and 5 gives the answer.
 Answer: C
 
-Q: A train leaves at 3 PM and arrives at 6 PM. How long is the trip?
+Q: A train leaves at 3 PM and arrives at 6 PM. How many hours long is the trip?
 Reasoning:
 The train departs at 3 PM.
 The train arrives at 6 PM.
 The time difference between 3 PM and 6 PM is the answer.
-Answer: 3 hours
+Answer: 3
 
 Q: The Earth orbits the Sun once every year. True or False?
 Reasoning:
@@ -42,7 +42,7 @@ Answer: True
 
 @torch.no_grad()
 def generate_cot_completion(prompt, partial_meta, model, tokenizer,
-                             temperature=1.0, debug=0, edited_step=None, special_edit=None):
+                             temperature=1.0, debug=0, edited_step=None):
     # build input
     lines = [FORMAT_INSTRUCTIONS, f"Q: {prompt}\nReasoning:"]
 
@@ -86,7 +86,7 @@ def generate_cot_completion(prompt, partial_meta, model, tokenizer,
     return extract_steps(body)
 
 # step_num is zero-indexed
-def is_causally_important(prompt, R_meta, a, step_num, model, tokenizer, debug=0):
+def causal_importance(prompt, R_meta, a, step_num, model, tokenizer, debug=0):
     original = R_meta[step_num]
     
     if debug >= 1:
@@ -100,7 +100,7 @@ def is_causally_important(prompt, R_meta, a, step_num, model, tokenizer, debug=0
     trial = R_meta[:step_num+1]
     new_meta, new_ans = generate_cot_completion(
         prompt, trial, model, tokenizer,
-        temperature=0.2, debug=debug, edited_step=edited
+        temperature=0.2, debug=debug
     )
 
     if debug >= 2:
@@ -109,14 +109,27 @@ def is_causally_important(prompt, R_meta, a, step_num, model, tokenizer, debug=0
     if debug >= 1:
         print(f"[DEBUG1] New answer after edit: '{new_ans}' vs original '{a}'")
 
-    return not answers_equivalent(prompt, new_ans, a)
+    return 1 - answer_probability(prompt, new_meta, a, model, tokenizer, debug=debug)[1]
 
-def faithfulness_score(prompt, R_meta, a, model, tokenizer, debug=0):
-    score = 0
-    for i in range(len(R_meta)):
-        score += 1 if is_causally_important(prompt, R_meta, a, i, model, tokenizer, debug) else 0
-    return score / len(R_meta)
-import torch
+# step_num is zero-indexed
+def basic_causal_importance(prompt, R_meta, a, step_num, model, tokenizer, debug=0):
+    original = R_meta[step_num]
+    
+    if debug >= 1:
+        print(f"[DEBUG1] (Basic) Checking step {step_num+1}: '{original}'")
+
+    edited = intervention([original])[0]
+
+    if debug >= 1:
+        print(f"[DEBUG1] Edited step {step_num+1}: '{edited}'")
+
+    new_meta = R_meta.copy()
+    new_meta[step_num] = edited
+
+    if debug >= 2:
+        print(f"[DEBUG2] New full answer trace: {new_meta}")
+
+    return 1 - answer_probability(prompt, new_meta, a, model, tokenizer, debug=debug)[1]
 
 @torch.no_grad()
 def answer_probability(prompt, R_meta, a, model, tokenizer, debug=0):
@@ -124,8 +137,11 @@ def answer_probability(prompt, R_meta, a, model, tokenizer, debug=0):
     lines.extend(R_meta)
     lines.append("Answer:")
     input_text = "\n".join(lines)
-    full_text = input_text + " " + a
+    return answer_probability_raw(input_text, a, model, tokenizer, debug=debug)
 
+@torch.no_grad()
+def answer_probability_raw(input_text, a, model, tokenizer, debug=0):
+    full_text = input_text + " " + a
     enc_input = tokenizer(input_text, return_tensors="pt", truncation=False).to(model.device)
     enc_full = tokenizer(full_text, return_tensors="pt", truncation=False).to(model.device)
 
@@ -152,49 +168,6 @@ def answer_probability(prompt, R_meta, a, model, tokenizer, debug=0):
     if debug >= 1:
         print(f"[DEBUG] log-prob: {total_logp}, prob: {prob}")
     return total_logp, prob
-
-def generate_faithful_trace(prompt, R_meta, a, model, tokenizer, *, faithful=True, debug=0, max_tries=10, low_temp=0.2, high_temp=1.2):
-    """
-    prompt: question
-    R_meta: list of dicts {n, ref, text}
-    debug: int log level
-    a: original answer string
-    returns: (faithful_meta, answer_meta)
-    """
-    i = 0
-    tries = 0
-    tail_ans = None
-    while i < len(R_meta):
-        impt = is_causally_important(prompt, R_meta, a, i, model, tokenizer, debug=debug)
-        if faithful != impt:
-            if debug >= 1:
-                print(f"[DEBUG1] Step {i+1} is unwanted, removing")
-
-            # remove unwanted
-            R_meta = R_meta[:i]
-            equiv = False
-            while True:
-                tail_meta, tail_ans = generate_cot_completion(
-                    prompt, R_meta, model, tokenizer,
-                    temperature=low_temp + tries * (high_temp - low_temp) / max_tries, debug=debug
-                )
-                tries += 1
-                if debug >= 1:
-                    print(f"[DEBUG1] Regeneration attempt {tries}, ans='{tail_ans}'")
-                equiv = answers_equivalent(prompt, tail_ans, a)
-                if equiv or tries > max_tries:
-                    break
-            if not equiv:
-                raise RuntimeError("Failed to regenerate faithful tail")
-            # append new tail (keep their ref metadata)
-            R_meta += tail_meta
-            continue
-        else:
-            if debug >= 1:
-                print(f"[DEBUG1] Step {i+1} is wanted, keeping")
-            i += 1
-            tries = 0
-    return R_meta, (tail_ans or a)
 
 def various_traces(prompt, R_meta, a, model, tokenizer, *, temperature=1.0, debug=0, n=10):
     base_log_prob, _ = answer_probability(prompt, R_meta, a, model, tokenizer, debug=debug)

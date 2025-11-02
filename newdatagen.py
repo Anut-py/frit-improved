@@ -43,7 +43,7 @@ def generate_preliminary_answer(prompt, temp, debug):
 def format_cot(cot):
     return "\n".join(cot[0] + [f'Answer: {cot[1]}'])
 
-def make_dpo_example(prompt, n=10, prelim_temp=0.5, various_temp=1.6, debug=0):
+def make_sft_example(prompt, n=10, prelim_temp=0.5, various_temp=1.6, debug=0):
     try:
         global model, tokenizer
         if not model:

@@ -15,13 +15,13 @@ aligned_models = {}
 
 def get_model_name(large: bool):
     if MISTRAL:
-        return "mistralai/Mistral-Small-24B-Base-2501" if large else "mistralai/Mistral-7B-v0.1"
+        return "mistralai/Mistral-Small-Instruct-2409" if large else "mistralai/Mistral-7B-Instruct-v0.3"
     else:
         return "Qwen/Qwen3-32B" if large else "Qwen/Qwen3-8B"
 
 def get_model_name_aligned(large: bool):
     if MISTRAL:
-        return "Mistral-24B-aligned" if large else "Mistral-7B-aligned"
+        return "Mistral-22B-aligned" if large else "Mistral-7B-aligned"
     else:
         return "Qwen3-32B-aligned" if large else "Qwen3-8B-aligned"
 

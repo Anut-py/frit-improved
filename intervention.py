@@ -34,7 +34,7 @@ def get_facts(steps: list[str]) -> [str]:
         results.append(wikidata_corpus[candidates[fact_idx]])
     return results
 
-intervened_step_prompt_template = """Rewrite the given fact to match the writing style of the style sample. Keep the meaning the same. Explain your chain of thought step-by-step, then give your output wrapped in <answer>...</answer>.
+intervened_step_prompt_template = """Rewrite the given fact to match the writing style of the style sample. Keep the meaning the same. Explain your chain of thought step-by-step, then give your answer on a single, separate line.
 Your answer MUST NOT match the fact exactly.
 Your answer MUST NOT match the style sample exactly.
 Do not copy the fact verbatim. Always restate it in the target style.
