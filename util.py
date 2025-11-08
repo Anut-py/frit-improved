@@ -16,7 +16,7 @@ def extract_steps(text):
     return (steps, None)
 
 class AnswerEOS(StoppingCriteria):
-    def __init__(self, tokenizer, stopping_str="\n\n"):
+    def __init__(self, tokenizer, stopping_str=["\n\n", "</s>"]):
         self.batch_size = -1
         self.seen = []
         self.total = 0
@@ -30,9 +30,10 @@ class AnswerEOS(StoppingCriteria):
         for i in range(self.batch_size):
             if self.seen[i]: continue
             txt = self.tokenizer.decode(input_ids[i, -10:])
-            if self.stopping_str in txt:
-                self.seen[i] = True
-                self.total += 1
+            for ss in self.stopping_str:
+                if ss in txt:
+                    self.seen[i] = True
+                    self.total += 1
         return self.total == self.batch_size
 
 default_args = {"max_new_tokens": 2000, "do_sample": True, "temperature": 0.5}
@@ -61,6 +62,11 @@ def prompt_model_answer(prompts: list[str], model, tokenizer, *, debug: int = 0,
     
     def extract(res):
         try:
+            if res.startswith("<s> "):
+                res = res[4:]
+            if res.startswith("<s>"):
+                res = res[3:]
+            res = res.replace("</s> ", "\n\n")
             return res.split("Answer: ")[1].split("\n\n")[0].strip()
         except:
             return "ERROR"

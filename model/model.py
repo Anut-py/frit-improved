@@ -122,4 +122,5 @@ def reset_aligned_model(large: bool = None) -> None:
     if os.path.exists(model_dir):
         shutil.rmtree(model_dir)
 
+    aligned_models.pop(large, None)
     save_aligned_model(load_aligned_model(large), large)

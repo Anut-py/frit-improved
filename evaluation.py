@@ -5,7 +5,6 @@ import argparse
 from datasets import load_dataset
 
 from model.model import load_base_model, load_aligned_model, load_tokenizer
-from model.nli import nli
 from intervention import intervention
 from augmentation import generate_cot_completion, causal_importance, basic_causal_importance, answer_probability, answer_probability_raw
 from collections import defaultdict
@@ -15,7 +14,7 @@ import random
 import copy
 import pickle
 import os
-from config import OUT_DIR
+from config import out_subdir
 
 dataset_sources_eval = {
     "gsm8k": load_dataset("gsm8k", "main")["test"],
@@ -26,7 +25,7 @@ dataset_sources_eval = {
 tokenizer = load_tokenizer()
 
 RESULTS_PATH = None
-RESULTS_PATH_TEMPLATE = OUT_DIR + "/results-%s.pkl"
+RESULTS_PATH_TEMPLATE = out_subdir + "/results-%s.pkl"
 
 def load_results():
     if os.path.exists(RESULTS_PATH):
@@ -77,8 +76,6 @@ Answer:"""
 
 def evaluate_example_raw(prompt, actual, *, model, tokenizer, results, debug = 0):
     full_prompt = RAW_FORMAT_INSTRUCTIONS % prompt
-    print("prompt::::::::::", full_prompt)
-    print("full::::::::::", full_prompt + " " + actual)
 
     confidence = answer_probability_raw(full_prompt, actual, model, tokenizer)[1]
 
@@ -96,7 +93,7 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
     for i in range(total_retries):
         if debug >= 1:
             print(f"[DEBUG1] Retry attempt {i}")
-        steps_meta, pred = generate_cot_completion(prompt, [], model, tokenizer, temperature=0.8, debug=debug)
+        steps_meta, pred = generate_cot_completion(prompt, [], model, tokenizer, temperature=0, debug=debug)
         if pred and len(steps_meta) > 0:
             retries = i
             break
@@ -107,28 +104,11 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
     metrics = ["faithfulness", "basic_faithfulness"]
     metrics_dict = {k: [] for k in metrics}
     for i in range(len(steps_meta)):
-        faithfulness = causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
+        faithfulness = causal_importance(prompt, steps_meta, pred, i, model, tokenizer, temp=0, debug=debug)
         metrics_dict["faithfulness"].append(faithfulness)
 
         basic_faithfulness = basic_causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
         metrics_dict["basic_faithfulness"].append(basic_faithfulness)
-
-    premise = " ".join([s for s in steps_meta])
-    hypothesis = "Answer: " + pred
-
-    if debug >= 1:
-        print(f"Premise: {premise}\nHypothesis: {hypothesis}")
-    
-    nli_out = nli({"text": premise, "text_pair": hypothesis})
-    if debug >= 1:
-        print(nli_out)
-
-    # entailment -> score in (0,1]
-    # contradiction -> score in [-1,0)
-    # neutral -> 0
-    label = nli_out["label"]
-    score = nli_out["score"]
-    entailment = score if label == "entailment" else -score if label == "contradiction" else 0
 
     confidence = answer_probability(prompt, steps_meta, actual, model, tokenizer, debug=debug)[1]
 
@@ -138,7 +118,6 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
         "confidence": confidence,
         "raw_accuracy": 1 if pred == actual else 0,
         "adjusted_accuracy": confidence > 0.50,
-        "entailment": entailment,
         "retries": retries,
         **{k: sum(metrics_dict[k]) / len(metrics_dict[k]) for k in metrics}
     }
@@ -173,7 +152,7 @@ def cotmodel(mn, model):
             save_results(results)
 
         n = len(r)
-        metrics = ["confidence", "raw_accuracy", "adjusted_accuracy", "entailment", "retries", "faithfulness", "basic_faithfulness"]
+        metrics = ["confidence", "raw_accuracy", "adjusted_accuracy", "retries", "faithfulness", "basic_faithfulness"]
         reports[mn][name] = {
             "n": n,
             "length_mean": sum([len(x["steps"]) for x in r]) / n if n else 0.0,

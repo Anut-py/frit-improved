@@ -428,42 +428,28 @@ def run_sft(gen_epoch, gpu_id=None):
     from copy import deepcopy
 
     data = safe_read_pickle(PICKLE_PATH)
-    
+
     kept = []
     set_aside = []
-    threshold = 3 # discard entries with a difference greater than 3 to avoid extremes
-
+    l, h = 0.5, 7
+    
     for entry in data:
         samples = entry.get('samples', [])
-        if len(samples) < 2:
-            continue
-
-        scores = [s[1] for s in samples]
-        max_score = max(scores)
-        min_score = min(scores)
     
-        if max_score - min_score > threshold:
-            i_max = scores.index(max_score)
-            i_min = scores.index(min_score)
+        outside = [s for s in samples if s[1] < l or s[1] > h]
     
-            highest = samples[i_max]
-            lowest = samples[i_min]
-    
+        if outside:
             set_aside.append({
                 'prompt': entry['prompt'],
                 'original': entry['original'],
-                'highest': highest,
-                'lowest': lowest
+                'samples': outside
             })
     
-            remaining = [samples[i] for i in range(len(samples)) if i not in (i_max, i_min) and scores[i] > 1]
-    
-            if len(remaining):
-                new_entry = deepcopy(entry)
-                new_entry['samples'] = remaining
-                kept.append(new_entry)
-        else:
-            kept.append(deepcopy(entry))
+        inside = [s for s in samples if s[1] >= l and s[1] <= h]
+        if inside:
+            new_entry = deepcopy(entry)
+            new_entry['samples'] = inside
+            kept.append(new_entry)
     
     from model.model import load_tokenizer, load_aligned_model, load_base_model
     
@@ -500,6 +486,7 @@ def run_sft(gen_epoch, gpu_id=None):
         prompt = e["prompt"].strip()
         for trace, score in e.get("samples", []):
             weight = (float(score) - mn) / denom
+            weight = 0.05 + 0.95 * weight
             inp = prompt + eos
             tgt = _join_trace(trace) + eos
             inp_ids = tokenizer.encode(inp, add_special_tokens=False)

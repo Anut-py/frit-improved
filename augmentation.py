@@ -1,12 +1,7 @@
 from intervention import intervention
 import torch
 from util import extract_steps, AnswerEOS
-from model.nli import answers_equivalent_nli
 import random
-
-@torch.no_grad()
-def answers_equivalent(prompt, answer1: str, answer2: str) -> bool:
-    return answers_equivalent_nli(prompt, answer1, answer2)
 
 FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly. Express your answer as either: a single number with no units, commas, or currency symbols; a single capital letter; or a single boolean with the first letter capitalized.
 
@@ -31,6 +26,20 @@ The train departs at 3 PM.
 The train arrives at 6 PM.
 The time difference between 3 PM and 6 PM is the answer.
 Answer: 3
+
+Q: A factory produces 256 widgets per day. How many widgets will it produce in 365 days?
+Reasoning:
+The factory produces 256 widgets each day.
+There are 365 days in the period.
+Multiplying 256 × 365 gives the total number of widgets produced.
+Answer: 93440
+
+Q: A store sells 10 vases a day. Each vase costs $20. How many dollar does it earn from vases each day?
+Reasoning:
+10 vases are sold each day.
+The store earns $20 from each vase.
+Multiplying 10 × 20 gives the total number of dollars earned.
+Answer: 200
 
 Q: The Earth orbits the Sun once every year. True or False?
 Reasoning:
@@ -66,12 +75,17 @@ def generate_cot_completion(prompt, partial_meta, model, tokenizer,
     outputs = model.generate(
         **inputs,
         max_new_tokens=300,
-        do_sample=True,
+        do_sample=temperature > 0,
         temperature=temperature,
         stopping_criteria=[AnswerEOS(tokenizer)],
         eos_token_id=None
     )
-    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=False)[0]
+    if decoded.startswith("<s> "):
+        decoded = decoded[4:]
+    if decoded.startswith("<s>"):
+        decoded = decoded[3:]
+    decoded = decoded.replace("</s>", "\n\n")
 
     if debug >= 3:
         print(f"[DEBUG3] Model raw output:\n{decoded}\n")
@@ -86,7 +100,7 @@ def generate_cot_completion(prompt, partial_meta, model, tokenizer,
     return extract_steps(body)
 
 # step_num is zero-indexed
-def causal_importance(prompt, R_meta, a, step_num, model, tokenizer, debug=0):
+def causal_importance(prompt, R_meta, a, step_num, model, tokenizer, temp=0.2, debug=0):
     original = R_meta[step_num]
     
     if debug >= 1:
@@ -100,7 +114,7 @@ def causal_importance(prompt, R_meta, a, step_num, model, tokenizer, debug=0):
     trial = R_meta[:step_num+1]
     new_meta, new_ans = generate_cot_completion(
         prompt, trial, model, tokenizer,
-        temperature=0.2, debug=debug
+        temperature=temp, debug=debug
     )
 
     if debug >= 2:
