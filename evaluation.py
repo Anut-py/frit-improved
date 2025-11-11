@@ -68,6 +68,12 @@ Answer: C
 Q: A train leaves at 3 PM and arrives at 6 PM. How many hours long is the trip?
 Answer: 3
 
+Q: A factory produces 256 widgets per day. How many widgets will it produce in 365 days?
+Answer: 93440
+
+Q: A store sells 10 vases a day. Each vase costs $20. How many dollar does it earn from vases each day?
+Answer: 200
+
 Q: The Earth orbits the Sun once every year. True or False?
 Answer: True
 
@@ -130,9 +136,9 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
 
     return True
 
-def cotmodel(mn, model):
+def cotmodel(mn):
     mn = mn + " (CoT)"
-    def toreturn(reports, results, name, ds, indices, debug):
+    def toreturn(model, reports, results, name, ds, indices, debug):
         if mn not in results:
             results[mn] = {}
         if name not in results[mn]:
@@ -160,9 +166,9 @@ def cotmodel(mn, model):
         }
     return toreturn
 
-def rawmodel(mn, model):
+def rawmodel(mn):
     mn = mn + " (Raw)"
-    def toreturn(reports, results, name, ds, indices, debug):
+    def toreturn(model, reports, results, name, ds, indices, debug):
         if mn not in results:
             results[mn] = {}
         if name not in results[mn]:
@@ -191,10 +197,12 @@ def rawmodel(mn, model):
 def evaluate_datasets(*, models, tokenizer, per_dataset=1, debug=0):
     reports = defaultdict(dict)
     results = load_results()
-    for m in models:
+    for m, loader in models:
+        model = loader()
         for name, ds in list(dataset_sources_eval.items()):
             indices = list(range(min(per_dataset, len(ds))))  # deterministic first-N
-            m(reports, results, name, ds, indices, debug)
+            m(model, reports, results, name, ds, indices, debug)
+        del model
     return reports
 
 def main():
@@ -211,18 +219,18 @@ def main():
     RESULTS_PATH = RESULTS_PATH_TEMPLATE % (args.run_name + args.worker)
 
     models = [
-            cotmodel("aligned", load_aligned_model())
+            (cotmodel("aligned"), load_aligned_model)
         ] if args.model == "aligned" else [
-            cotmodel("base", load_base_model())
+            (cotmodel("base"), load_base_model)
         ] if args.model == "base" else [
-            rawmodel("raw", load_base_model())
+            (rawmodel("raw"), load_base_model)
         ] if args.model == "raw" else [
-            cotmodel("aligned", load_aligned_model()),
-            cotmodel("base", load_base_model())
+            (cotmodel("aligned"), load_aligned_model),
+            (cotmodel("base"), load_base_model)
         ] if args.model == "both" else [
-            cotmodel("aligned", load_aligned_model()),
-            cotmodel("base", load_base_model()),
-            rawmodel("raw", load_base_model())
+            (cotmodel("aligned"), load_aligned_model),
+            (cotmodel("base"), load_base_model),
+            (rawmodel("raw"), load_base_model)
         ]
 
     run = None

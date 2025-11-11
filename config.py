@@ -1,4 +1,4 @@
-LARGE = False # Set false for 7-8B, set true for 24-32B
+LARGE = True # Set false for 7-8B, set true for 24-32B
 MISTRAL = False # Set false for Qwen, set true for Mistral
 idx = (0 if MISTRAL else 1) if not LARGE else (2 if MISTRAL else 3) # mistral small, qwen small, mistral large, qwen large
 
@@ -23,7 +23,7 @@ VARIOUS_TEMP = [0.2, 1.6, 0.2, 1.6][idx]
 
 BATCH_SIZE = 4
 EPOCHS = 3
-LR = [1e-5, 1e-4, 1e-5, 1e-4][idx]
+LR = [1e-5, 1e-4, 5e-7, 1e-4][idx]
 GRAD_ACCUM_STEPS = 1
 MAX_LENGTH = 512
-KL_LAMBDA = [0.4, 0.1, 0.4, 0.1][idx]
+KL_LAMBDA = [0.4, 0.1, 0.2, 0.1][idx]
