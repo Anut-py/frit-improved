@@ -1,7 +1,8 @@
 from sentence_transformers import SentenceTransformer, util
 import torch
+from config import CACHE_DIR
 
-model = SentenceTransformer("BAAI/bge-large-en-v1.5", cache_folder="/workspace/hf_cache").to("cuda")
+model = SentenceTransformer("BAAI/bge-large-en-v1.5", cache_folder=CACHE_DIR).to("cuda")
 
 def gen_embeddings(texts):
     return model.encode(texts, convert_to_tensor=True, normalize_embeddings=True).to("cuda")
