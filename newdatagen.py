@@ -37,6 +37,22 @@ def format_entry(entry, dataset_name):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
+def format_answer(entry, dataset_name):
+    if dataset_name == "gsm8k":
+        return entry["answer"].split("#### ")[1]
+    elif dataset_name == "svamp":
+        return entry["Answer"]
+    elif dataset_name == "strategyqa":
+        return entry["answer"]
+    elif dataset_name == "commonsenseqa":
+        return entry["answerKey"]
+    elif dataset_name == "scibench":
+        return entry["answer_number"]
+    elif dataset_name == "asdiv":
+        return entry["answer"][0].split(" ")[0]
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
 def generate_preliminary_answer(prompt, temp, debug):
     return generate_cot_completion(prompt, [], model, tokenizer, temperature=temp, debug=debug)
 

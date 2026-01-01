@@ -10,6 +10,7 @@ def extract_steps(text):
     for l in ls:
         if not l.strip():
             continue
+        l = l.strip()
         if l.startswith("Answer: "):
             return (steps, l[8:].strip())
         steps.append(l.strip())

@@ -54,7 +54,7 @@ def format_entry_for_eval(entry, dataset_name):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
-total_retries = 3
+total_retries = 6
 
 RAW_FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly. Express your answer as either: a single number with no units, commas, or currency symbols; a single capital letter; or a single boolean with the first letter capitalized.
 
@@ -103,6 +103,8 @@ def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0
         if pred and len(steps_meta) > 0:
             retries = i
             break
+        else:
+            print(f"failed {steps_meta}, answer={pred}")
 
     if len(steps_meta) == 0 or not pred:
         return False

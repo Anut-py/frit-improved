@@ -274,8 +274,7 @@ def init_work_queue_if_missing(path, n):
         return
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     indices = list(range(n))
-    # reverse so pop() yields indices in forward order
-    indices.reverse()
+    random.shuffle(indices)
     atomic_write_pickle(path, indices)
 
 def pop_work_index(path):

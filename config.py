@@ -9,7 +9,7 @@ OUT_DIR = "/lambda/nfs/Algoverse/frit-out" # Directory for generated files to be
 DATA_DIR = "/lambda/nfs/Algoverse/frit/data" # Directory where data files are stored (set this to /path/to/frit/data)
 
 GPUS = 1 # Number of GPUs
-PER_GPU = 1 # Number of workers per GPU (used only in parallel_dpo.py; adjust as needed for your GPU; we used 2 workers per GPU on RTX Pro 6000 Server GPUs)
+PER_GPU = 2 # Number of workers per GPU (used only in parallel_dpo.py; adjust as needed for your GPU; we used 2 workers per GPU on RTX Pro 6000 Server GPUs)
 
 data_subdir = DATA_DIR + ("/mistral" if MISTRAL else "/qwen") + ("-large" if LARGE else "")
 out_subdir = OUT_DIR + ("/mistral" if MISTRAL else "/qwen") + ("-large" if LARGE else "")
@@ -17,7 +17,8 @@ out_subdir = OUT_DIR + ("/mistral" if MISTRAL else "/qwen") + ("-large" if LARGE
 # Config for FRIT
 
 GEN_EPOCHS = 1
-TARGET_EXAMPLES = 3000 if LARGE else 5000
+# TARGET_EXAMPLES = 3000 if LARGE else 5000
+TARGET_EXAMPLES = 2000
 PRELIM_TEMP = [0.1, 0.5, 0.1, 0.5][idx]
 VARIOUS_TEMP = [0.2, 1.6, 0.2, 1.6][idx]
 

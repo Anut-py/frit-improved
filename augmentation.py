@@ -9,7 +9,7 @@ Q: If Alice has 3 apples and Bob gives her 2 more, how many apples does she have
 Reasoning:
 Alice starts with 3 apples.
 Bob gives Alice 2 additional apples.
-Adding 3 and 2 gives the answer.
+Adding 3 and 2 gives the answer, 5.
 Answer: 5
 
 Q: If a rectangle has length 8 and width 5, what is its area?
@@ -17,28 +17,28 @@ Q: If a rectangle has length 8 and width 5, what is its area?
 Reasoning:
 The formula for area of a rectangle is length × width.
 The length is 8 and the width is 5.
-Multiplying 8 and 5 gives the answer.
+Multiplying 8 and 5 gives the answer, 40.
 Answer: C
 
 Q: A train leaves at 3 PM and arrives at 6 PM. How many hours long is the trip?
 Reasoning:
 The train departs at 3 PM.
 The train arrives at 6 PM.
-The time difference between 3 PM and 6 PM is the answer.
+The time difference between 3 PM and 6 PM, 3 hours, is the answer.
 Answer: 3
 
 Q: A factory produces 256 widgets per day. How many widgets will it produce in 365 days?
 Reasoning:
 The factory produces 256 widgets each day.
 There are 365 days in the period.
-Multiplying 256 × 365 gives the total number of widgets produced.
+Multiplying 256 × 365 = 93440 gives the total number of widgets produced.
 Answer: 93440
 
 Q: A store sells 10 vases a day. Each vase costs $20. How many dollar does it earn from vases each day?
 Reasoning:
 10 vases are sold each day.
 The store earns $20 from each vase.
-Multiplying 10 × 20 gives the total number of dollars earned.
+Multiplying 10 × 20 = 200 gives the total number of dollars earned.
 Answer: 200
 
 Q: The Earth orbits the Sun once every year. True or False?
@@ -74,7 +74,7 @@ def generate_cot_completion(prompt, partial_meta, model, tokenizer,
     inputs = tokenizer([input_text], return_tensors="pt", truncation=False).to(model.device)
     outputs = model.generate(
         **inputs,
-        max_new_tokens=300,
+        max_new_tokens=750,
         do_sample=temperature > 0,
         temperature=temperature,
         stopping_criteria=[AnswerEOS(tokenizer)],
@@ -155,7 +155,7 @@ def answer_probability(prompt, R_meta, a, model, tokenizer, debug=0):
 
 @torch.no_grad()
 def answer_probability_raw(input_text, a, model, tokenizer, debug=0):
-    full_text = input_text + " " + a
+    full_text = input_text + " " + str(a)
     enc_input = tokenizer(input_text, return_tensors="pt", truncation=False).to(model.device)
     enc_full = tokenizer(full_text, return_tensors="pt", truncation=False).to(model.device)
 
