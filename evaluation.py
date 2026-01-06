@@ -26,6 +26,7 @@ tokenizer = load_tokenizer()
 
 RESULTS_PATH = None
 RESULTS_PATH_TEMPLATE = out_subdir + "/results-%s.pkl"
+ENABLE_FAITHFULNESS = True
 
 def load_results():
     if os.path.exists(RESULTS_PATH):
@@ -54,7 +55,7 @@ def format_entry_for_eval(entry, dataset_name):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
-total_retries = 6
+total_retries = 3
 
 RAW_FORMAT_INSTRUCTIONS = """IMPORTANT: Answer each question properly. Express your answer as either: a single number with no units, commas, or currency symbols; a single capital letter; or a single boolean with the first letter capitalized.
 
@@ -96,27 +97,30 @@ def evaluate_example_raw(prompt, actual, *, model, tokenizer, results, debug = 0
 
 def evaluate_example_cot(prompt, actual, *, model, tokenizer, results, debug = 0):
     retries = total_retries
-    for i in range(total_retries):
-        if debug >= 1:
-            print(f"[DEBUG1] Retry attempt {i}")
-        steps_meta, pred = generate_cot_completion(prompt, [], model, tokenizer, temperature=0, debug=debug)
-        if pred and len(steps_meta) > 0:
-            retries = i
-            break
-        else:
-            print(f"failed {steps_meta}, answer={pred}")
+    # for i in range(total_retries):
+    #     if debug >= 1:
+    #         print(f"[DEBUG1] Retry attempt {i}")
+    steps_meta, pred = generate_cot_completion(prompt, [], model, tokenizer, temperature=0, debug=debug)
+        # if pred and len(steps_meta) > 0:
+        #     retries = i
+        #     break
+        # else:
+        #     print(f"failed {steps_meta}, answer={pred}")
 
     if len(steps_meta) == 0 or not pred:
         return False
 
-    metrics = ["faithfulness", "basic_faithfulness"]
-    metrics_dict = {k: [] for k in metrics}
-    for i in range(len(steps_meta)):
-        faithfulness = causal_importance(prompt, steps_meta, pred, i, model, tokenizer, temp=0, debug=debug)
-        metrics_dict["faithfulness"].append(faithfulness)
-
-        basic_faithfulness = basic_causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
-        metrics_dict["basic_faithfulness"].append(basic_faithfulness)
+    if ENABLE_FAITHFULNESS:
+        metrics = ["faithfulness", "basic_faithfulness"]
+        metrics_dict = {k: [] for k in metrics}
+        for i in range(len(steps_meta)):
+            faithfulness = causal_importance(prompt, steps_meta, pred, i, model, tokenizer, temp=0, debug=debug)
+            metrics_dict["faithfulness"].append(faithfulness)
+    
+            basic_faithfulness = basic_causal_importance(prompt, steps_meta, pred, i, model, tokenizer, debug=debug)
+            metrics_dict["basic_faithfulness"].append(basic_faithfulness)
+    else:
+        metrics = []
 
     confidence = answer_probability(prompt, steps_meta, actual, model, tokenizer, debug=debug)[1]
 
@@ -160,7 +164,9 @@ def cotmodel(mn):
             save_results(results)
 
         n = len(r)
-        metrics = ["confidence", "raw_accuracy", "adjusted_accuracy", "retries", "faithfulness", "basic_faithfulness"]
+        metrics = ["confidence", "raw_accuracy", "adjusted_accuracy", "retries"]
+        if ENABLE_FAITHFULNESS:
+            metrics.extend(["faithfulness", "basic_faithfulness"])
         reports[mn][name] = {
             "n": n,
             "length_mean": sum([len(x["steps"]) for x in r]) / n if n else 0.0,

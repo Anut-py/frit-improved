@@ -26,5 +26,5 @@ BATCH_SIZE = 4
 EPOCHS = 3
 LR = [1e-5, 1e-4, 5e-7, 1e-4][idx]
 GRAD_ACCUM_STEPS = 1
-MAX_LENGTH = 512
+MAX_LENGTH = 2048
 KL_LAMBDA = [0.4, 0.1, 0.2, 0.1][idx]

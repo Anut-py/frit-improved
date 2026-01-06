@@ -427,6 +427,26 @@ def run_sft(gen_epoch, gpu_id=None):
     from copy import deepcopy
 
     data = safe_read_pickle(PICKLE_PATH)
+    data = [({**y, 'samples': [(z, w, i) for i, (z, w) in enumerate(y['samples']) if len(z) != i + 1]}) for y in data if len(y['samples'])]
+
+    pmap = dict()
+    dsmap = dict()
+    
+    for k, v in dataset_sources.items():
+        # if "qa" in k: continue
+        for vv in v:
+            dsmap[format_entry(vv, k)] = k
+            # high faithfulness, low accuracy
+            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (0.8 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.2 if "qa" in k else 0.75))
+            # medium faithfulness, high accuracy
+            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.5 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.2 if "qa" in k else 0.75))
+            # bestest2
+            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.5 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
+            # bestest3
+            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.0 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
+            # bestest4
+            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.0 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
+            pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.8 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
 
     kept = []
     set_aside = []
