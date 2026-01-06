@@ -1,5 +1,5 @@
 LARGE = False # Set false for 7-8B, set true for 24-32B
-MISTRAL = True # Set false for Qwen, set true for Mistral
+MISTRAL = False # Set false for Qwen, set true for Mistral
 idx = (0 if MISTRAL else 1) if not LARGE else (2 if MISTRAL else 3) # mistral small, qwen small, mistral large, qwen large
 
 CACHE_DIR = "/lambda/nfs/Algoverse/hf_cache" # Hugging Face cache directory
