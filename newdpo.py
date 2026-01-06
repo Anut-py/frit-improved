@@ -429,46 +429,51 @@ def run_sft(gen_epoch, gpu_id=None):
     data = safe_read_pickle(PICKLE_PATH)
     data = [({**y, 'samples': [(z, w, i) for i, (z, w) in enumerate(y['samples']) if len(z) != i + 1]}) for y in data if len(y['samples'])]
 
+    from newdatagen import dataset_sources, format_entry, format_answer
+    from config import ANSWER_WEIGHT, SAMPLE_WEIGHT, SCORE_THRESHOLD, SCORE_ANSWER_THRESHOLD
+    
     pmap = dict()
     dsmap = dict()
     
     for k, v in dataset_sources.items():
-        # if "qa" in k: continue
         for vv in v:
             dsmap[format_entry(vv, k)] = k
-            # high faithfulness, low accuracy
-            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (0.8 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.2 if "qa" in k else 0.75))
-            # medium faithfulness, high accuracy
-            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.5 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.2 if "qa" in k else 0.75))
-            # bestest2
-            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.5 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
-            # bestest3
-            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.0 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
-            # bestest4
-            # pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.0 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
-            pmap[format_entry(vv, k)] = (format_answer(vv, k), (1.8 if "gsm" in k else 0.4 if "qa" in k else 0.8), (1.0 if "qa" in k else 1.0))
+            pmap[format_entry(vv, k)] = (
+                format_answer(vv, k),
+                (ANSWER_WEIGHT[0] if "gsm" in k else ANSWER_WEIGHT[1] if "qa" in k else ANSWER_WEIGHT[2]),
+                (SAMPLE_WEIGHT[0] if "gsm" in k else SAMPLE_WEIGHT[1] if "qa" in k else SAMPLE_WEIGHT[2])
+            )
 
     kept = []
     set_aside = []
-    l, h = 0.5, 7
+    l, h = SCORE_THRESHOLD
     
+    from collections import defaultdict
     for entry in data:
         samples = entry.get('samples', [])
-    
+
         outside = [s for s in samples if s[1] < l or s[1] > h]
-    
+
         if outside:
             set_aside.append({
                 'prompt': entry['prompt'],
                 'original': entry['original'],
                 'samples': outside
             })
-    
+
         inside = [s for s in samples if s[1] >= l and s[1] <= h]
+
         if inside:
             new_entry = deepcopy(entry)
             new_entry['samples'] = inside
+            new_entry['answer'] = pmap[entry['prompt']][0] if entry['prompt'] in pmap else None
+            new_entry['answer_weight'] = pmap[entry['prompt']][1] if entry['prompt'] in pmap else 0
+            new_entry['mult'] = pmap[entry['prompt']][2] if entry['prompt'] in pmap else 1.0
             kept.append(new_entry)
+
+    import random
+    random.seed(42)
+    random.shuffle(kept)
     
     from model.model import load_tokenizer, load_aligned_model, load_base_model
     
@@ -478,7 +483,7 @@ def run_sft(gen_epoch, gpu_id=None):
     
     model.train()
     ref_model.eval()
-    
+
     import os
     import torch
     from datasets import Dataset
@@ -494,31 +499,60 @@ def run_sft(gen_epoch, gpu_id=None):
         return str(trace)
     
     examples = []
-    raw_scores = [float(sc) for e in kept for _, sc in e.get("samples", [])]
+    raw_scores = [float(sc) for e in kept for _, sc, _ in e.get("samples", [])]
     if not raw_scores:
         raise ValueError("kept contains no samples")
     mn, mx = min(raw_scores), max(raw_scores)
     denom = max(1e-12, mx - mn)
     eos = tokenizer.eos_token or ""
-    
+
     for e in kept:
         prompt = e["prompt"].strip()
-        for trace, score in e.get("samples", []):
+        avg = 0
+        for trace, score, step in e.get("samples", []):
             weight = (float(score) - mn) / denom
-            weight = 0.05 + 0.95 * weight
-            inp = prompt + eos
-            tgt = _join_trace(trace) + eos
+            weight = (0.05 + 0.95 * weight) ** (1/2)
+            add_ans = weight >= SCORE_ANSWER_THRESHOLD
+            weight *= e['mult']
+            avg += weight
+            inp = f"Q: {prompt}\nReasoning:\n{_join_trace(trace[:step+1])}\n"
+            tgt = f"{_join_trace(trace[step+1:])}"
+            ans = None
+            if add_ans and e['answer'] is not None:
+                tgt += "\n"
+                ans = f"Answer: {e['answer']}\n\n"
             inp_ids = tokenizer.encode(inp, add_special_tokens=False)
             tgt_ids = tokenizer.encode(tgt, add_special_tokens=False)
+            token_weights = [0] * len(inp_ids) + [weight] * len(tgt_ids)
+            if ans is not None:
+                ans_ids = tokenizer.encode(ans, add_special_tokens=False)
+                tgt_ids += ans_ids
+                token_weights += [e['answer_weight'] * weight] * len(ans_ids)
             if len(inp_ids) + len(tgt_ids) > MAX_LENGTH:
-                keep_tgt = MAX_LENGTH // 2
-                keep_inp = MAX_LENGTH - keep_tgt
-                inp_ids = inp_ids[-keep_inp:]
-                tgt_ids = tgt_ids[:keep_tgt]
+                continue
+                # keep_tgt = MAX_LENGTH // 2
+                # keep_inp = MAX_LENGTH - keep_tgt
+                # inp_ids = inp_ids[-keep_inp:]
+                # tgt_ids = tgt_ids[:keep_tgt]
             input_ids = inp_ids + tgt_ids
             labels = [-100] * len(inp_ids) + tgt_ids
-            examples.append({"input_ids": input_ids, "labels": labels, "weight": float(weight)})
-    
+            # examples.append({"input_ids": input_ids, "labels": labels, "weight": float(weight)})
+            examples.append({"input_ids": input_ids, "labels": labels, "token_weights": token_weights})
+        # if e['answer'] is None:
+        #     continue
+        # avg /= len(e["samples"])
+        # inp = f"Q: {prompt}\nReasoning:\n{_join_trace(e['original'][0])}\n"
+        # tgt = f"Answer: {e['answer']}{eos}"
+        # inp_ids = tokenizer.encode(inp, add_special_tokens=False)
+        # tgt_ids = tokenizer.encode(tgt, add_special_tokens=False)
+        # if len(inp_ids) + len(tgt_ids) > MAX_LENGTH:
+        #     keep_tgt = MAX_LENGTH // 2
+        #     keep_inp = MAX_LENGTH - keep_tgt
+        #     inp_ids = inp_ids[-keep_inp:]
+        #     tgt_ids = tgt_ids[:keep_tgt]
+        # input_ids = inp_ids + tgt_ids
+        # labels = [-100] * len(inp_ids) + tgt_ids
+        # examples.append({"input_ids": input_ids, "labels": labels, "weight": e["answer_weight"]})
     hf_ds = Dataset.from_list(examples)
     
     def data_collator(batch):
@@ -527,16 +561,18 @@ def run_sft(gen_epoch, gpu_id=None):
         input_ids = [x["input_ids"] + [pad_id] * (max_len - len(x["input_ids"])) for x in batch]
         labels = [x["labels"] + [-100] * (max_len - len(x["labels"])) for x in batch]
         attention_mask = [[1] * len(x["input_ids"]) + [0] * (max_len - len(x["input_ids"])) for x in batch]
-        weights = [x["weight"] for x in batch]
+        # weights = [x["weight"] for x in batch]
+        token_weights = [x["token_weights"] + [0] * (max_len - len(x["token_weights"])) for x in batch]
         return {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long),
-            "weights": torch.tensor(weights, dtype=torch.float)
+            # "weights": torch.tensor(weights, dtype=torch.float)
+            "token_weights": torch.tensor(token_weights, dtype=torch.float)
         }
     
     from torch.nn import functional as F
-    
+
     class WeightedSFTTrainer(Trainer):
         def __init__(self, ref_model=None, kl_lambda=0.5, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -547,37 +583,43 @@ def run_sft(gen_epoch, gpu_id=None):
                 self.ref_model.eval()
                 for p in self.ref_model.parameters():
                     p.requires_grad = False
-    
+
         def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-            weights = inputs.pop("weights", None)
+            # weights = inputs.pop("weights", None)
+            token_weights = inputs.pop("token_weights", None)
             device = self.model.device
             tensor_inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
         
-            if weights is None:
-                weights = torch.ones(tensor_inputs["labels"].size(0), dtype=torch.float, device=device)
-            else:
-                weights = weights.to(device).float()
+            # if weights is None:
+            #     weights = torch.ones(tensor_inputs["labels"].size(0), dtype=torch.float, device=device)
+            # else:
+            #     weights = weights.to(device).float()
+            token_weights = token_weights.to(device).float()[..., 1:].contiguous()
         
             labels = tensor_inputs["labels"]
             outputs = model(**tensor_inputs)
             logits = outputs.logits  # (B, S, V)
         
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            mask = (shift_labels != -100).float()
+            # --- SHIFT for causal LM: predict token t using logits at t-1 ---
+            shift_logits = logits[..., :-1, :].contiguous()          # (B, S-1, V)
+            shift_labels = labels[..., 1:].contiguous()             # (B, S-1)
+            mask = (shift_labels != -100).float()                   # (B, S-1)
         
             vocab = shift_logits.size(-1)
             loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
             flat_logits = shift_logits.view(-1, vocab)
             flat_labels = shift_labels.view(-1)
-            token_losses = loss_fct(flat_logits, flat_labels).view(shift_labels.size(0), -1)
+            token_losses = loss_fct(flat_logits, flat_labels).view(shift_labels.size(0), -1) * mask
         
-            token_loss_sum = (token_losses * mask).sum(dim=1)
-            denom = mask.sum(dim=1).clamp(min=1.0)
-            per_sample_ce = token_loss_sum / denom
-            weighted_ce = (per_sample_ce * weights).sum() / max(1e-12, weights.sum())
+            # token_loss_sum = (token_losses * mask).sum(dim=1)
+            token_loss_sum = (token_losses * token_weights).sum(dim=1)
+            denom = token_weights.sum(dim=1).clamp(min=1.0)
+            per_sample_ce = (token_losses * token_weights).sum(dim=1) / denom
+            # weighted_ce = (per_sample_ce * weights).sum() / max(1e-12, weights.sum())
+            weighted_ce = per_sample_ce.mean()
             total_loss = weighted_ce
         
+            # --- KL (compare next-token distributions) ---
             if self.ref_model is not None and self.kl_lambda > 0:
                 with torch.no_grad():
                     ref_logits = self.ref_model(
@@ -589,9 +631,10 @@ def run_sft(gen_epoch, gpu_id=None):
                 model_logp = F.log_softmax(shift_logits, dim=-1)
                 ref_p = torch.exp(ref_logp)
                 per_token_kl = (ref_p * (ref_logp - model_logp)).sum(dim=-1)    # (B, S-1)
-                per_sample_kl = (per_token_kl * mask).sum(dim=1) / denom
-                kl_weights = (1.0 - weights).clamp(min=0.0)
-                weighted_kl = (per_sample_kl * kl_weights).sum() / max(1e-12, kl_weights.sum())
+                # per_sample_kl = (per_token_kl * mask).sum(dim=1) / denom
+                per_sample_kl = (per_token_kl * token_weights).sum(dim=1) / denom
+                # kl_weights = (1.0 - weights).clamp(min=0.0)
+                weighted_kl = per_sample_kl.mean()
                 total_loss = total_loss + self.kl_lambda * weighted_kl
         
             return (total_loss, outputs) if return_outputs else total_loss

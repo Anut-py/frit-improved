@@ -22,9 +22,29 @@ TARGET_EXAMPLES = 2000
 PRELIM_TEMP = [0.1, 0.5, 0.1, 0.5][idx]
 VARIOUS_TEMP = [0.2, 1.6, 0.2, 1.6][idx]
 
+# gsm, qa, other
+ANSWER_WEIGHT = [
+  [1.8, 0.4, 0.8],
+  [0.0, 0.0, 0.0],
+  [0.0, 0.0, 0.0],
+  [0.0, 0.0, 0.0],
+][idx]
+SCORE_ANSWER_THRESHOLD = [0.4, 0.4, 0.4, 0.4][idx]
+SAMPLE_WEIGHT = [
+  [1.0, 1.0, 1.0],
+  [0.0, 0.0, 0.0],
+  [0.0, 0.0, 0.0],
+  [0.0, 0.0, 0.0],
+][idx]
+SCORE_THRESHOLD = [
+  (0.5, 12),
+  (0.5, 12),
+  (0.5, 12),
+  (0.5, 12),
+][idx]
 BATCH_SIZE = 4
-EPOCHS = 3
-LR = [1e-5, 1e-4, 5e-7, 1e-4][idx]
+EPOCHS = [1, 1, 1, 1][idx]
+LR = [7e-5, 1e-4, 5e-7, 1e-4][idx]
 GRAD_ACCUM_STEPS = 1
 MAX_LENGTH = 2048
-KL_LAMBDA = [0.4, 0.1, 0.2, 0.1][idx]
+KL_LAMBDA = [0.8, 0.1, 0.2, 0.1][idx]
